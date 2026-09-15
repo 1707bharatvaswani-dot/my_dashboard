@@ -20,7 +20,7 @@ st.markdown("""
 st.title("⚡ Silicon Valley-Grade Insurance Intelligence System")
 
 # [कहाँ बदलें]: अपनी Parquet फाइल का सही पाथ यहाँ सेट करें
-file_path = "clean_insurance_data.parquet"
+file_path = "/content/clean_insurance_data.parquet"
 
 @st.cache_data
 def load_and_process_insurance_data(path):
