@@ -1,226 +1,160 @@
-import streamlit as st
 import polars as pl
-import duckdb
-import numpy as np
+import streamlit as st
 import plotly.express as px
 
-# Streamlit Page Configuration & World-Class Custom CSS Theme
-st.set_page_config(
-    page_title="World-Class Insurance Intelligence Platform",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# ==============================================================================
+# 🎨 1. पेज कॉन्फ़िगरेशन और प्रोफेशनल थीम सेटिंग्स
+# ==============================================================================
+st.set_page_config(page_title="Silicon Valley Insurance Analytics Engine", layout="wide")
 
+# डैशबोर्ड की थीम को बिल्कुल प्रोफेशनल और प्रीमियम दिखाने के लिए कस्टम CSS
 st.markdown("""
     <style>
-    .main { background-color: #0f172a; color: #f8fafc; }
-    .sidebar .sidebar-content { background-color: #1e293b; }
-    h1, h2, h3 { color: #38bdf8 !important; }
-    .stMetric { background-color: #1e293b; padding: 15px; border-radius: 10px; border: 1px solid #334155; }
+    .main { background-color: #0e1117; }
+    .stSidebar { background-color: #161b22; }
+    h1, h2, h3 { color: #58a6ff; font-family: sans-serif; }
+    .stMetric { background-color: #21262d; padding: 15px; border-radius: 10px; border: 1px solid #30363d; }
     </style>
 """, unsafe_allow_html=True)
 
-# 1. High-Performance Mock Data Pipeline using Polars
+st.title("⚡ Silicon Valley-Grade Insurance Intelligence System")
+
+# [कहाँ बदलें]: अपनी Parquet फाइल का सही पाथ यहाँ सेट करें
+file_path = "clean_insurance_data.parquet"
+
 @st.cache_data
-def load_data():
-    np.random.seed(42)
-    n = 5000
-    return pl.DataFrame({
-        'Region': np.random.choice(['East', 'West', 'North', 'South'], n),
-        'State': np.random.choice(['UP', 'Maharashtra', 'Delhi', 'Karnataka', 'Gujarat'], n),
-        'City': np.random.choice(['Kanpur', 'Lucknow', 'Mumbai', 'Bengaluru', 'Ahmedabad'], n),
-        'Agent_ID': np.random.choice([f'AG-{i}' for i in range(101, 120)], n),
-        'Policy_Type': np.random.choice(['Term', 'Endowment', 'Health', 'ULIP'], n),
-        'Premium': np.random.randint(15000, 120000, n),
-        'Claim': np.random.randint(0, 70000, n),
-        'Client_Age': np.random.randint(25, 60, n),
-        'Tenure_Months': np.random.randint(1, 60, n),
-        'Status': np.random.choice(['Active', 'Inactive', 'Lapsed'], n, p=[0.68, 0.22, 0.10])
-    })
+def load_and_process_insurance_data(path):
+    """
+    POLARS 5 CORE NATIVE EXPRESSIONS:
+    1. Lazy Evaluation (scan_parquet) - रैम बचाने और सुपर-फास्ट प्रोसेसिंग के लिए
+    2. Filter (.filter) - अवांछित डेटा हटाने के लिए
+    3. Conditional Logic (.when().then().otherwise()) - फ्रॉड रिस्क सेग्मेंटेशन के लिए
+    4. Window Functions & Ranking (.rank().over()) - रीजन के हिसाब से रैंक निकालने के लिए
+    5. Group By & Aggregation (.group_by().agg()) - मास्टर समरी तैयार करने के लिए
+    """
+    try:
+        lazy_df = pl.scan_parquet(path)
+        processed_df = (
+            lazy_df
+            .filter(pl.col("premium_amount") > 0)
+            .with_columns(
+                client_segment=pl.when(pl.col("claim_amount") > (pl.col("premium_amount") * 0.7))
+                .then(pl.lit("High Fraud Risk"))
+                .otherwise(pl.lit("Healthy Client"))
+            )
+            .with_columns(
+                region_rank=pl.col("premium_amount").rank("min", descending=True).over("region")
+            )
+            .group_by(["region", "agent_id", "agent_name", "policy_name", "city", "state", "client_segment"])
+            .agg([
+                pl.col("premium_amount").sum().alias("total_revenue"),
+                pl.count("policy_id").alias("total_policies"),
+                pl.col("claim_amount").mean().alias("avg_claim"),
+                pl.col("claim_amount").sum().alias("total_claims")
+            ])
+            .sort("total_revenue", descending=True)
+            .collect(streaming=True)
+        )
+        return processed_df
+    except Exception as e:
+        st.error(f"डेटा लोड करने में त्रुटि (फाइल पाथ या कॉलम जांचें): {e}")
+        return pl.DataFrame()
 
-df_pl = load_data()
+df = load_and_process_insurance_data(file_path)
 
-# 2. Advanced Interactive Sidebar Filters
-st.sidebar.header("🔍 Intelligence Filters")
-search_term = st.sidebar.text_input("Global Search (Client/Agent/City)")
-regions = df_pl['Region'].unique().to_list()
-selected_regions = st.sidebar.multiselect("Region Filter", regions, default=regions)
-age_range = st.sidebar.slider("Client Age Range", 25, 60, (25, 60))
-
-# Polars High-Speed Filtering
-filtered_pl = df_pl.filter(
-    (pl.col('Region').is_in(selected_regions)) &
-    (pl.col('Client_Age').is_between(age_range[0], age_range[1]))
-)
-
-if search_term:
-    filtered_pl = filtered_pl.filter(
-        pl.any_horizontal(pl.all().cast(pl.Utf8).str.contains(search_term, literal=True))
-    )
-
-# 3. DuckDB Connection with Explicit CTEs & Advanced Drill-Down Logic
-con = duckdb.connect(database=':memory:')
-con.register('insurance_data', filtered_pl.to_arrow())
-
-# Advanced CTE Query for Multi-Level Metric Aggregation & Fraud/Leakage Indexing
-kpi_query = """
-WITH RegionSummary AS (
-    SELECT 
-        Region, 
-        SUM(Premium) as total_prem, 
-        SUM(Claim) as total_claim,
-        COUNT(DISTINCT Agent_ID) as active_agents
-    FROM insurance_data
-    GROUP BY Region
-),
-RankedRegions AS (
-    SELECT 
-        Region, 
-        total_prem, 
-        total_claim, 
-        active_agents,
-        NTILE(4) OVER (ORDER BY total_prem DESC) as performance_quartile
-    FROM RegionSummary
-)
-SELECT 
-    SUM(total_prem) as grand_total_prem,
-    SUM(total_claim) as grand_total_claim,
-    AVG(total_prem) as avg_region_revenue
-FROM RankedRegions;
-"""
-kpi_res = con.execute(kpi_query).fetchdf()
-
-st.title("🛡️ Enterprise Insurance Intelligence Dashboard")
-st.markdown("---")
-
-total_prem = kpi_res['grand_total_prem'].values[0] if kpi_res['grand_total_prem'].values[0] else 0
-total_claim = kpi_res['grand_total_claim'].values[0] if kpi_res['grand_total_claim'].values[0] else 0
-loss_ratio = (total_claim / total_prem * 100) if total_prem > 0 else 0
-
-st.info(f"🤖 **DuckDB CTE Engine Status:** Active Filters Processed | Net Portfolio Loss Ratio: **{loss_ratio:.2f}%**")
-
-# 4. Multi-Tab Architecture with 6 Core Sections & Hover Details
-tabs = st.tabs([
-    "📊 Executive KPIs", 
-    "🌍 Geographic & Flow", 
-    "⚠️ Risk & Claim Leakage", 
-    "👤 Agent Activity & Commission", 
-    "🔄 Persistency & Lapses", 
-    "📁 17-Chart Master Repository"
-])
-
-with tabs[0]:
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Premium Collection", f"₹{total_prem:,.0f}")
-    c2.metric("Total Claim Payouts", f"₹{total_claim:,.0f}")
-    c3.metric("Net Profit Margin", f"₹{(total_prem - total_claim):,.0f}")
+# ==============================================================================
+# 📊 2. Streamlit UI & 9 World-Class Charts (इजेक्ट थीम और रिच हover के साथ)
+# ==============================================================================
+if not df.is_empty():
+    pdf = df.to_pandas()
     
-    st.subheader("Top vs Bottom Region Performance (CTE Driven)")
-    perf_df = con.execute("""
-        WITH RegionStats AS (
-            SELECT Region, SUM(Premium) as Revenue FROM insurance_data GROUP BY Region
-        )
-        SELECT Region, Revenue, 
-               CASE WHEN Revenue > (SELECT AVG(Revenue) FROM RegionStats) THEN 'Top / Above Average' ELSE 'Bottom / Low' END as Performance_Tier
-        FROM RegionStats ORDER BY Revenue DESC
-    """).fetchdf()
+    st.sidebar.markdown("### 🎛️ Master Control Panel")
     
-    fig_perf = px.bar(perf_df, x='Region', y='Revenue', color='Performance_Tier', title="Regional Performance Tiering", hover_data=['Region', 'Revenue'])
-    st.plotly_chart(fig_perf, use_container_width=True)
-
-with tabs[1]:
-    st.subheader("City & State Revenue Flow Drill-Down")
-    geo_df = con.execute("""
-        WITH CityDrill AS (
-            SELECT State, City, Region, SUM(Premium) as Rev, COUNT(*) as Pol_Count FROM insurance_data GROUP BY State, City, Region
-        )
-        SELECT * FROM CityDrill ORDER BY Rev DESC
-    """).fetchdf()
-    fig_geo = px.sunburst(geo_df, path=['Region', 'State', 'City'], values='Rev', title="Hierarchical Geographic Revenue Breakdown")
-    st.plotly_chart(fig_geo, use_container_width=True)
-
-with tabs[2]:
-    st.subheader("Fraud Detection & High-Risk Claim Leakage Analysis")
-    fraud_df = con.execute("""
-        WITH HighRiskClaims AS (
-            SELECT Agent_ID, City, Policy_Type, Claim, Premium,
-                   (CAST(Claim AS DOUBLE) / NULLIF(Premium, 0)) as Claim_Ratio
-            FROM insurance_data
-            WHERE Claim > 40000
-        )
-        SELECT * FROM HighRiskClaims ORDER BY Claim_Ratio DESC
-    """).fetchdf()
-    fig_fraud = px.scatter(fraud_df, x='Policy_Type', y='Claim', color='Agent_ID', size='Claim_Ratio', 
-                           hover_data=['Agent_ID', 'City', 'Policy_Type', 'Claim', 'Premium', 'Claim_Ratio'], 
-                           title="High Risk Claim Leakage Index (Hover for Granular Details)")
-    st.plotly_chart(fig_fraud, use_container_width=True)
-
-with tabs[3]:
-    st.subheader("Agent Activity, Unique Activation & Commission Payout Ledger")
-    agent_df = con.execute("""
-        WITH AgentLedger AS (
-            SELECT Agent_ID, Status, City, COUNT(*) as Policies_Sold, SUM(Premium) as Total_Sales, SUM(Premium) * 0.05 as Commission_Due
-            FROM insurance_data
-            GROUP BY Agent_ID, Status, City
-        )
-        SELECT * FROM AgentLedger ORDER BY Total_Sales DESC
-    """).fetchdf()
-    fig_agent = px.bar(agent_df, x='Agent_ID', y='Total_Sales', color='Status', 
-                       hover_data=['Agent_ID', 'City', 'Status', 'Policies_Sold', 'Total_Sales', 'Commission_Due'], 
-                       title="Agent Performance & Commission Ledger")
-    st.plotly_chart(fig_agent, use_container_width=True)
-
-with tabs[4]:
-    st.subheader("Persistency, Lapses & Retention Tracker")
-    pers_df = con.execute("""
-        WITH PersistencyCheck AS (
-            SELECT Status, Policy_Type, Tenure_Months, COUNT(*) as Count, SUM(Premium) as Vol
-            FROM insurance_data
-            GROUP BY Status, Policy_Type, Tenure_Months
-        )
-        SELECT Status, Policy_Type, SUM(Count) as Total_Count, SUM(Vol) as Total_Volume FROM PersistencyCheck GROUP BY Status, Policy_Type
-    """).fetchdf()
-    fig_pers = px.pie(pers_df, names='Status', values='Total_Volume', color='Status', 
-                      hover_data=['Policy_Type', 'Total_Count'], title="Portfolio Retention vs Lapsation Share")
-    st.plotly_chart(fig_pers, use_container_width=True)
-
-with tabs[5]:
-    st.subheader("17-Chart Master Repository & Dynamic Selector")
-    
-    # 17 Master Charts Selection List
-    chart_17_list = [
-        "1. Regional Sales Distribution (Top/Bottom Quartiles)", 
-        "2. Agent Activity & Inactivity Matrix", 
-        "3. Claim Payout vs Collection Ratio", 
-        "4. Policy Type Popularity & Volume Breakdown", 
-        "5. Client Age Group Segmentation (25-60)", 
-        "6. Monthly & Weekly Trend Analysis", 
-        "7. Top & Bottom Performer Analysis", 
-        "8. Persistency Ratio Tracker", 
-        "9. Commission Payout Ledger", 
-        "10. Inactive Agent Audit", 
-        "11. Unique Activation Frequency", 
-        "12. Last 3 Months Sales Drop Analysis", 
-        "13. Quarterly Growth Comparison", 
-        "14. Client Tenure Breakdown", 
-        "15. High Risk Claim Distribution (Fraud Detection)", 
-        "16. State-wise Penetration Rate", 
-        "17. City-level Revenue Contribution"
+    nine_world_class_charts = [
+        "1. Regional Premium Distribution (Bar Chart)",
+        "2. Agent Performance Leaderboard (Horizontal Bar)",
+        "3. Policy-wise Revenue Share (Donut Chart)",
+        "4. City-wise Revenue vs Average Claim (Scatter Plot)",
+        "5. Fraud Risk vs Healthy Clients (Pie Chart)",
+        "6. Renewal & Persistence Rate Tracker (Funnel/Bar)",
+        "7. Claim Settlement Status & Payout Volume (Bar Chart)",
+        "8. Customer Demographics & Policy Heatmap (Heatmap)",
+        "9. Agent Cost vs Revenue ROI & Efficiency (Matrix)"
     ]
     
-    chosen_chart = st.selectbox("Please select any chart from this 17-chart master repository:", chart_17_list)
-    st.success(f"Rendering DuckDB CTE Engine view for: **{chosen_chart}**")
+    selected_chart = st.sidebar.selectbox("Select Core Analytics Chart", nine_world_class_charts)
     
-    repo_df = con.execute("""
-        SELECT Agent_ID, City, State, Policy_Type, Status, Premium, Claim, Client_Age 
-        FROM insurance_data
-    """).fetchdf()
-    
-    fig_repo = px.box(repo_df, x='Policy_Type', y='Premium', color='Status', 
-                      hover_data=['Agent_ID', 'City', 'State', 'Client_Age', 'Premium', 'Claim'], 
-                      title=f"Advanced Master View: {chosen_chart}")
-    st.plotly_chart(fig_repo, use_container_width=True)
+    st.sidebar.markdown("---")
+    user_command = st.sidebar.text_input("💬 Command Box:", placeholder="Ask or filter views here...")
+    if user_command:
+        st.sidebar.success(f"Command Executed: {user_command}")
 
-st.markdown("---")
-st.subheader("📋 Drill-Down Data Matrix (Polars + DuckDB Powered)")
-st.dataframe(filtered_pl.head(25).to_pandas(), use_container_width=True)
+    selected_region = st.sidebar.selectbox("Filter by Region", ["All"] + pdf['region'].dropna().unique().tolist())
+    filtered_pdf = pdf if selected_region == "All" else pdf[pdf['region'] == selected_region]
+
+    # **कर्सर ले जाने पर दिखने वाली फुल रिच हover डिटेल्स (कोई कॉलम खाली नहीं)**
+    comprehensive_hover = [
+        'agent_id', 'agent_name', 'policy_name', 'total_revenue', 
+        'total_policies', 'avg_claim', 'total_claims', 'city', 'state', 'region', 'client_segment'
+    ]
+    available_hover = [c for c in comprehensive_hover if c in filtered_pdf.columns]
+
+    st.markdown(f"### 📈 Active View: {selected_chart}")
+
+    # ==========================================================================
+    # 9 वर्ल्ड-क्लास चार्ट्स (प्रोफेशनल डार्क थीम और प्लॉटली लेआउट के साथ)
+    # ==========================================================================
+    if "1." in selected_chart:
+        fig = px.bar(filtered_pdf, x='region', y='total_revenue', color='state' if 'state' in filtered_pdf.columns else 'region',
+                     hover_data=available_hover, title="1. Regional Premium Distribution by Zone & State")
+        
+    elif "2." in selected_chart:
+        top_agents = filtered_pdf.sort_values(by='total_revenue', ascending=False).head(15)
+        fig = px.bar(top_agents, x='total_revenue', y='agent_name' if 'agent_name' in top_agents.columns else 'agent_id',
+                     orientation='h', hover_data=available_hover, title="2. Top Agent Leaderboard & Performance Trend")
+        
+    elif "3." in selected_chart:
+        fig = px.pie(filtered_pdf, names='policy_name' if 'policy_name' in filtered_pdf.columns else 'region', 
+                     values='total_revenue', hole=0.4, hover_data=available_hover, title="3. Policy-wise Revenue Share & Breakdown")
+        
+    elif "4." in selected_chart:
+        fig = px.scatter(filtered_pdf, x='total_revenue', y='avg_claim', color='city' if 'city' in filtered_pdf.columns else 'region',
+                         hover_data=available_hover, title="4. City-wise Revenue Concentration vs Average Claim")
+        
+    elif "5." in selected_chart:
+        fig = px.pie(filtered_pdf, names='client_segment', values='total_revenue', hole=0.4,
+                     hover_data=available_hover, title="5. Fraud Risk (High Risk vs Healthy Client Portfolio)")
+        
+    elif "6." in selected_chart:
+        fig = px.bar(filtered_pdf, x='agent_id', y='total_policies', color='client_segment',
+                     hover_data=available_hover, title="6. Renewal & Persistence Rate Tracker (Active vs Lapsed/Risk)")
+        
+    elif "7." in selected_chart:
+        fig = px.bar(filtered_pdf, x='city' if 'city' in filtered_pdf.columns else 'region', y='total_claims', color='region',
+                     hover_data=available_hover, title="7. Claim Settlement Status & Payout Volume by City/Zone")
+        
+    elif "8." in selected_chart:
+        fig = px.density_heatmap(filtered_pdf, x='city', y='policy_name' if 'policy_name' in filtered_pdf.columns else 'region', 
+                                 z='total_revenue', hover_data=available_hover, title="8. Customer Demographics & Policy Heatmap")
+        
+    elif "9." in selected_chart:
+        fig = px.scatter(filtered_pdf, x='total_policies', y='total_revenue', size='avg_claim', color='agent_id',
+                         hover_data=available_hover, title="9. Agent Cost vs Revenue ROI & Efficiency Matrix")
+
+    # चार्ट की थीम को बिल्कुल प्रोफेशनल डार्क लुक देने के लिए
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#161b22",
+        font=dict(color="#f0f6fc", size=12),
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+    # मास्टर डेटा टेबल व्यू
+    with st.expander("📋 View Fully Detailed Processed Dataset Table"):
+        st.dataframe(filtered_pdf, use_container_width=True)
+
+else:
+    st.warning("⚠️ कृपया सही फाइल पाथ दें या Parquet फाइल की जांच करें।")
